@@ -36,7 +36,6 @@ import spack.error
 import spack.patch
 import spack.spec
 import spack.util.spack_json as sjson
-import spack.util.imp as simp
 import spack.provider_index
 import spack.util.path
 import spack.util.naming as nm
@@ -884,8 +883,8 @@ class Repo(object):
         if spec.namespace and spec.namespace != self.namespace:
             raise UnknownPackageError(spec.name, self.namespace)
 
-        package_class = self.get_pkg_class(spec.name)
         try:
+            package_class = self.get_pkg_class(spec.name)
             return package_class(spec)
         except spack.error.SpackError:
             # pass these through as their error messages will be fine.
@@ -1051,18 +1050,25 @@ class Repo(object):
             # e.g., spack.pkg.builtin.mpich
             fullname = "%s.%s" % (self.full_namespace, pkg_name)
 
+            # Python3's exec() returns NameError (name 'module' is not defined)
+            # BUT the local 'self' *can* be leveraged.
+            self._curr_module = None
             try:
-                module = simp.load_source(fullname, file_path,
-                                          prepend=_package_prepend)
+                # The SyntaxError is raised during parsing, which is only
+                # thrown when executing import, exec(), and eval().
+                exec('import spack.util.imp as simp; '
+                     'self._curr_module = simp.load_source(fullname, '
+                     'file_path, prepend=_package_prepend)')
             except SyntaxError as e:
-                # SyntaxError strips the path from the filename so we need to
-                # manually construct the error message in order to give the
-                # user the correct package.py where the syntax error is located
+                # Adding debug message with fullname ensures flake8 will not
+                # fail with "assigned to but never used".
+                tty.debug('Failed to parse the {0} package'.format(fullname))
                 raise SyntaxError('invalid syntax in {0:}, line {1:}'
-                                  ''.format(file_path, e.lineno))
-            module.__package__ = self.full_namespace
-            module.__loader__ = self
-            self._modules[pkg_name] = module
+                                  .format(file_path, e.lineno))
+
+            self._curr_module.__package__ = self.full_namespace
+            self._curr_module.__loader__ = self
+            self._modules[pkg_name] = self._curr_module
 
         return self._modules[pkg_name]
 
